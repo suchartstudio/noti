@@ -19,7 +19,7 @@
         .container {
             background-color: #ffffff;
             width: 100%;
-            max-width: 700px; /* ขนาดกำลังดีสำหรับหน้าจอ Notebook */
+            max-width: 700px;
             padding: 40px;
             border-radius: 16px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
@@ -29,8 +29,17 @@
             text-align: center;
             font-size: 24px;
             margin-top: 0;
-            margin-bottom: 20px;
+            margin-bottom: 5px;
             color: #1a73e8;
+        }
+        .warning-note {
+            text-align: center;
+            font-size: 13px;
+            color: #e53935;
+            margin-bottom: 20px;
+            background-color: #ffebee;
+            padding: 10px;
+            border-radius: 8px;
         }
         .form-group {
             margin-bottom: 20px;
@@ -102,11 +111,14 @@
 
     <div class="container">
         <h1>🎙️ อ่านข้อความภาษาไทย</h1>
+        <div class="warning-note">
+            <strong>*สำหรับผู้ใช้ iPhone/iPad:</strong> โปรดตรวจสอบว่าไม่ได้เปิดปุ่มปิดเสียง (Mute) ด้านข้างเครื่องอยู่ ไม่เช่นนั้นจะไม่มีเสียงออกมา
+        </div>
         
         <div class="form-group">
-            <label for="voiceSelect">เลือกเสียง (ชาย/หญิง ขึ้นอยู่กับอุปกรณ์ของคุณ):</label>
+            <label for="voiceSelect">เลือกเสียง (ถ้าไม่ขึ้นให้เลือก ระบบจะใช้เสียงพื้นฐาน):</label>
             <select id="voiceSelect">
-                <option value="">กำลังโหลดเสียง...</option>
+                <option value="">กำลังโหลดเสียง หรือใช้เสียงพื้นฐานของระบบ...</option>
             </select>
         </div>
 
@@ -132,33 +144,32 @@
         const statusText = document.getElementById('statusText');
 
         let voices = [];
+        let isIOSUnlocked = false; // ตัวแปรเช็คว่าปลดล็อคเสียงบน iOS หรือยัง
 
         // ฟังก์ชันโหลดรายชื่อเสียง
         function populateVoiceList() {
             voices = synth.getVoices();
-            
-            // กรองเอาเฉพาะเสียงที่รองรับภาษาไทย
             const thaiVoices = voices.filter(voice => voice.lang.includes('th'));
             
             voiceSelect.innerHTML = '';
 
             if (thaiVoices.length === 0) {
                 const option = document.createElement('option');
-                option.textContent = 'ไม่พบเสียงภาษาไทยบนอุปกรณ์/เบราว์เซอร์นี้';
+                option.textContent = 'ใช้เสียงภาษาไทยเริ่มต้นของระบบ';
+                option.value = 'default';
                 voiceSelect.appendChild(option);
                 return;
             }
 
             thaiVoices.forEach((voice) => {
                 const option = document.createElement('option');
-                // แสดงชื่อเสียง (มักจะบอกใบ้ว่าเป็นชายหรือหญิง เช่น Kanya, Pattara)
-                option.textContent = `${voice.name} (${voice.lang})`;
+                option.textContent = `${voice.name}`;
                 option.setAttribute('data-name', voice.name);
                 voiceSelect.appendChild(option);
             });
         }
 
-        // โหลดเสียงเมื่อ API พร้อม
+        // โหลดเสียงเมื่อเปิดเว็บ และเมื่อ API พร้อม (แก้ปัญหา Safari โหลดช้า)
         populateVoiceList();
         if (speechSynthesis.onvoiceschanged !== undefined) {
             speechSynthesis.onvoiceschanged = populateVoiceList;
@@ -166,44 +177,62 @@
 
         // ฟังก์ชันเล่นเสียง
         playBtn.addEventListener('click', () => {
-            if (synth.speaking) {
-                synth.cancel(); // หยุดเสียงเก่าก่อนถ้ากำลังพูดอยู่
+            // ปลดล็อค Audio Context สำหรับ iOS เมื่อมีการคลิกครั้งแรก
+            if (!isIOSUnlocked) {
+                const unlockUtterance = new SpeechSynthesisUtterance('');
+                synth.speak(unlockUtterance);
+                isIOSUnlocked = true;
             }
 
+            // ถ้าระบบกำลังพูดอยู่ให้หยุดก่อน ป้องกันการค้างบนมือถือบางรุ่น
+            if (synth.speaking) {
+                synth.cancel(); 
+                // เพิ่ม delay เล็กน้อยสำหรับ iOS Safari เพื่อให้ cancel ทำงานเสร็จก่อน
+                setTimeout(() => startSpeaking(), 100);
+            } else {
+                startSpeaking();
+            }
+        });
+
+        function startSpeaking() {
             const text = textInput.value.trim();
             if (text !== '') {
                 const utterThis = new SpeechSynthesisUtterance(text);
                 
-                // ค้นหาเสียงที่ผู้ใช้เลือกจาก Dropdown
-                const selectedVoiceName = voiceSelect.selectedOptions[0].getAttribute('data-name');
-                const selectedVoice = voices.find(voice => voice.name === selectedVoiceName);
+                // บังคับให้เป็นภาษาไทยเสมอ (สำคัญมากสำหรับ iOS Fallback)
+                utterThis.lang = 'th-TH'; 
                 
-                if (selectedVoice) {
-                    utterThis.voice = selectedVoice;
+                // ค้นหาเสียงที่ผู้ใช้เลือก (ถ้ามี)
+                if (voiceSelect.selectedOptions[0] && voiceSelect.selectedOptions[0].value !== 'default') {
+                    const selectedVoiceName = voiceSelect.selectedOptions[0].getAttribute('data-name');
+                    const selectedVoice = voices.find(voice => voice.name === selectedVoiceName);
+                    if (selectedVoice) {
+                        utterThis.voice = selectedVoice;
+                    }
                 }
                 
-                utterThis.lang = 'th-TH';
-                
-                // กำหนดความเร็วและระดับเสียงได้ (0.1 ถึง 2)
                 utterThis.rate = 1.0; 
                 utterThis.pitch = 1.0;
 
-                // Event Listeners สำหรับสถานะ
+                // Event Listeners
                 utterThis.onstart = () => { statusText.textContent = '🔊 กำลังอ่านข้อความ...'; };
                 utterThis.onend = () => { statusText.textContent = 'พร้อมใช้งาน'; };
-                utterThis.onerror = () => { statusText.textContent = '❌ เกิดข้อผิดพลาดในการเล่นเสียง'; };
+                utterThis.onerror = (e) => { 
+                    console.error('TTS Error:', e);
+                    statusText.textContent = '❌ เกิดข้อผิดพลาด/ถูกขัดจังหวะ'; 
+                };
 
                 synth.speak(utterThis);
             } else {
                 statusText.textContent = '⚠️ กรุณาพิมพ์ข้อความก่อนกดเล่นเสียง';
             }
-        });
+        }
 
         // ฟังก์ชันหยุดเสียง
         stopBtn.addEventListener('click', () => {
-            if (synth.speaking) {
+            if (synth.speaking || synth.pending) {
                 synth.cancel();
-                statusText.textContent = 'พร้อมใช้งาน';
+                statusText.textContent = 'หยุดการอ่านข้อความแล้ว';
             }
         });
     </script>
